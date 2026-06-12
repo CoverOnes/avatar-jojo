@@ -1,0 +1,16 @@
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+.git/
+.github/
+.env
+.env.local
+.env.*.local
+tests/
+*.md
+!README.md

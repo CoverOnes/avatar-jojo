@@ -1,0 +1,57 @@
+[project]
+name = "avatar-jojo"
+version = "0.1.0"
+description = "CoverOnes AI-avatar service (LiveKit Agents) — first-cut skeleton"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115,<1.0",
+    "uvicorn[standard]>=0.34,<1.0",
+    "pydantic-settings>=2.7,<3.0",
+    "python-dotenv>=1.0,<2.0",
+    "livekit-api>=1.0,<2.0",
+    "livekit-agents>=1.5,<2.0",
+    "httpx>=0.28,<1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3,<9.0",
+    "pytest-asyncio>=0.25,<2.0",
+    "ruff>=0.9,<1.0",
+    "mypy>=1.14,<2.0",
+]
+
+[project.scripts]
+avatar-api = "avatar.api.main:run"
+avatar-agent = "avatar.agent.worker:run"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["avatar*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "W", "C4", "SIM"]
+# B008: FastAPI's dependency-injection idiom is `Depends(...)` in arg defaults.
+extend-ignore = ["B008"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unused_configs = true
+# livekit-agents ships partial type stubs; don't fail the whole gate on third-party gaps.
+[[tool.mypy.overrides]]
+module = ["livekit.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
