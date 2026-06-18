@@ -15,6 +15,8 @@ dependencies = [
     # §24.1 replay-nonce store (async client). Required at runtime only when
     # GATEWAY_NONCE_REDIS_URL is set (staging/prod); imported lazily.
     "redis>=5.2,<7.0",
+    # MOne behavior-engine kernel (avatar/mone) -- pure-numpy Kuramoto math.
+    "numpy>=2.0,<3.0",
 ]
 
 [project.optional-dependencies]
