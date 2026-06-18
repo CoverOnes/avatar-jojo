@@ -9,7 +9,7 @@ Two layers:
    end.
 
 2. Nonce/replay tests — spin a REAL Redis via testcontainers-python and assert a
-   replayed ``X-Request-Id`` is rejected. Skipped (not silently passed) when
+   replayed ``X-Request-ID`` is rejected. Skipped (not silently passed) when
    Docker is unavailable.
 
 The expected-signature helper here is an INDEPENDENT reimplementation of the
@@ -98,7 +98,7 @@ def _signed_headers(
         "X-Kyc-Tier": FIX_KYC_TIER,
         "X-Account-Type": account_type,
         "X-Email-Verified": FIX_EMAIL_VERIFIED,
-        "X-Request-Id": request_id,
+        "X-Request-ID": request_id,
         "X-Gateway-Ts": ts_str,
         "X-Gateway-Signature": sig,
     }
@@ -413,7 +413,7 @@ def test_distinct_request_ids_both_pass(monkeypatch: pytest.MonkeyPatch, redis_u
 def test_missing_request_id_with_redis_rejected(
     monkeypatch: pytest.MonkeyPatch, redis_url: str
 ) -> None:
-    # Signed request with no X-Request-Id while Redis is configured → 401
+    # Signed request with no X-Request-ID while Redis is configured → 401
     # (cannot replay-check safely). Mirrors the Go verifier's empty-rid path.
     now = int(time.time())
     client = _build_client(monkeypatch, secret=TEST_SECRET, nonce_redis_url=redis_url)
