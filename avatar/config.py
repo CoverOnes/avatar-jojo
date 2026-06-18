@@ -40,6 +40,13 @@ class Settings(BaseSettings):
     # §24.1 gateway trust boundary. Empty = dev short-circuit (no HMAC check).
     gateway_hmac_secret: str = ""
 
+    # Redis URL for the §24.1 replay-nonce store (gw:nonce:{rid}). When empty the
+    # nonce/replay check is skipped (mirrors the Go verifier's nil-redis path:
+    # dev/test). Set in staging/prod so a signed request can only be used once
+    # within the skew window. Convention: dedicated DB index. Example:
+    # redis://localhost:6379/3
+    gateway_nonce_redis_url: str = ""
+
     # Avatar S2S identity (on-behalf-of calls to Go services). Reserved for later.
     avatar_s2s_service_id: str = "avatar"
     avatar_s2s_token: str = ""
@@ -66,8 +73,7 @@ class Settings(BaseSettings):
             ]
             if missing:
                 raise ValueError(
-                    f"Missing required LiveKit settings in {self.app_env!r}: "
-                    f"{', '.join(missing)}"
+                    f"Missing required LiveKit settings in {self.app_env!r}: {', '.join(missing)}"
                 )
         return self
 
