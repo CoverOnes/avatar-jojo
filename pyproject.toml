@@ -12,6 +12,9 @@ dependencies = [
     "livekit-api>=1.0,<2.0",
     "livekit-agents>=1.5,<2.0",
     "httpx>=0.28,<1.0",
+    # §24.1 replay-nonce store (async client). Required at runtime only when
+    # GATEWAY_NONCE_REDIS_URL is set (staging/prod); imported lazily.
+    "redis>=5.2,<7.0",
 ]
 
 [project.optional-dependencies]
@@ -20,6 +23,8 @@ dev = [
     "pytest-asyncio>=0.25,<2.0",
     "ruff>=0.9,<1.0",
     "mypy>=1.14,<2.0",
+    # Real Redis container for the §24.1 nonce/replay integration tests.
+    "testcontainers[redis]>=4.8,<5.0",
 ]
 
 [project.scripts]
@@ -50,6 +55,10 @@ warn_unused_configs = true
 # livekit-agents ships partial type stubs; don't fail the whole gate on third-party gaps.
 [[tool.mypy.overrides]]
 module = ["livekit.*"]
+ignore_missing_imports = true
+# testcontainers ships no py.typed marker; test-only import.
+[[tool.mypy.overrides]]
+module = ["testcontainers.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

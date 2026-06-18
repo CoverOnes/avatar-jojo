@@ -39,6 +39,13 @@ USER avatar
 
 EXPOSE 8080
 
+# Liveness probe hits the unauthenticated health route. NOTE: the current path is
+# /api/avatar/health; a separate task will drop the /api/avatar router prefix, at
+# which point this URL must be updated to match. Uses the stdlib urllib (the slim
+# image ships no curl/wget) and reads the same port the app binds.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+    CMD ["python", "-c", "import os,urllib.request; urllib.request.urlopen('http://127.0.0.1:'+os.environ.get('AVATAR_API_PORT','8080')+'/api/avatar/health', timeout=2)"]
+
 # Runs the FastAPI control API (the gateway-facing surface). The agent worker is
 # a separate process (`python -m avatar.agent start`) — run it as its own
 # container/command when the renderer phase lands.
