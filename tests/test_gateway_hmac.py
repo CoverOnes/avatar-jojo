@@ -30,7 +30,7 @@ import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
-from avatar.api.security import verify_gateway_hmac
+from avatar.api.security import GATEWAY_BODY_LIMIT, verify_gateway_hmac
 from avatar.config import get_settings
 
 # 32-char placeholder HMAC secret — test only, NOT a real secret. Matches the Go
@@ -274,6 +274,20 @@ def test_cross_endpoint_replay_rejected_401(monkeypatch: pytest.MonkeyPatch) -> 
     # Reuse the signature with a different body → mismatch.
     resp = client.post("/protected", headers=headers, content=b'{"amount":999}')
     assert resp.status_code == 401, "replay with altered body must be 401"
+
+
+def test_oversized_body_rejected_413(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A body just past GATEWAY_BODY_LIMIT must be rejected with 413 (not the
+    # generic 401) and never fully buffered — mirrors the Go verifier's
+    # BODY_TOO_LARGE / io.LimitReader(limit+1) path. The signature is computed
+    # over the oversized body so the rejection is the size cap, not a sig
+    # mismatch (the size check fires before signature verification).
+    now = int(time.time())
+    client = _build_client(monkeypatch, secret=TEST_SECRET)
+    body = b"x" * (GATEWAY_BODY_LIMIT + 1)
+    headers = _signed_headers(TEST_SECRET, "POST", "/protected", body, now)
+    resp = client.post("/protected", headers=headers, content=body)
+    assert resp.status_code == 413, "oversized body must be 413 BODY_TOO_LARGE"
 
 
 # --- byte-for-byte cross-check against the Go signer -------------------------

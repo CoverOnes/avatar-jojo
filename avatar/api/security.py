@@ -28,7 +28,7 @@ where:
                       ``url.URL.RequestURI()`` and the FastAPI
                       ``request.url.path`` (+ ``"?" + request.url.query``).
   - ``bodyHashHex`` = hex(sha256(raw request body)); empty body → hex(sha256(b"")).
-  - ``rid``         = ``X-Request-Id`` header.
+  - ``rid``         = ``X-Request-ID`` header.
   - ``ts``          = ``X-Gateway-Ts`` header (unix seconds, decimal string).
 
 Signature header ``X-Gateway-Signature`` is the hex-encoded HMAC-SHA256 digest,
@@ -51,6 +51,7 @@ import asyncio
 import hashlib
 import hmac
 import time
+import weakref
 from typing import TYPE_CHECKING
 
 from fastapi import Depends, HTTPException, Request, status
@@ -66,7 +67,7 @@ HEADER_USER_ID = "X-User-Id"
 HEADER_KYC_TIER = "X-Kyc-Tier"
 HEADER_ACCOUNT_TYPE = "X-Account-Type"
 HEADER_EMAIL_VERIFIED = "X-Email-Verified"
-HEADER_REQUEST_ID = "X-Request-Id"
+HEADER_REQUEST_ID = "X-Request-ID"
 HEADER_GATEWAY_TS = "X-Gateway-Ts"
 HEADER_GATEWAY_SIGNATURE = "X-Gateway-Signature"
 
@@ -94,6 +95,18 @@ GATEWAY_BODY_LIMIT = 1 << 20  # 1 MB
 _UNAUTHORIZED = HTTPException(
     status_code=status.HTTP_401_UNAUTHORIZED,
     detail="authentication required",
+)
+
+# Oversized body is a distinct, non-secret failure (the request never reached
+# signature verification): return 413, mirroring the Go verifier's
+# BODY_TOO_LARGE / http.StatusRequestEntityTooLarge path. Kept separate from the
+# generic 401 so a caller can tell "too big" from "unauthorized". The literal 413
+# is used (not status.HTTP_413_*) because Starlette renamed the constant
+# (REQUEST_ENTITY_TOO_LARGE → CONTENT_TOO_LARGE) and this service's Starlette
+# version isn't pinned — the integer is stable across both.
+_BODY_TOO_LARGE = HTTPException(
+    status_code=413,
+    detail="request body exceeds limit",
 )
 
 
@@ -153,31 +166,74 @@ def _within_skew(ts_unix: int) -> bool:
     return abs(time.time() - ts_unix) <= MAX_GATEWAY_SKEW_SECONDS
 
 
+async def _read_body_capped(request: Request, limit: int) -> bytes:
+    """Stream the request body, aborting (413) the instant it exceeds ``limit``.
+
+    ``await request.body()`` buffers the WHOLE body before any size check, so a
+    huge unsigned payload would be fully allocated first → OOM/DoS. Instead we
+    consume ``request.stream()`` chunk by chunk and raise ``_BODY_TOO_LARGE`` as
+    soon as the running total passes ``limit``, never holding more than ``limit``
+    bytes plus one chunk. This mirrors the Go verifier's
+    ``io.LimitReader(body, limit+1)`` posture (it reads at most ``limit+1`` bytes,
+    then rejects when ``len > limit``).
+
+    The accumulated bytes are cached on ``request._body`` (the exact attribute
+    Starlette's ``Request.body()`` populates and reuses), so downstream handlers
+    that call ``request.body()`` / ``request.json()`` / parse a Pydantic body see
+    the same bytes — reading here does NOT consume the stream for the handler.
+    """
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > limit:
+            # Over the cap: stop reading and reject before allocating more.
+            raise _BODY_TOO_LARGE
+        chunks.append(chunk)
+
+    body = b"".join(chunks)
+    # Populate Starlette's body cache so request.body()/json() downstream reuse
+    # these bytes instead of trying to re-consume the now-exhausted stream.
+    request._body = body  # noqa: SLF001 - documented Starlette body-cache attribute
+    return body
+
+
 # Async Redis clients are bound to the event loop that created their connection
 # pool. uvicorn runs every request on ONE loop, so a per-loop cache is a stable
 # long-lived client there, while still staying correct under pytest (where each
-# TestClient request spins a fresh loop). Keyed by (url, loop) so a client is
-# reused within a loop but never shared across loops — sharing across loops makes
-# redis-py raise mid-command, which would fail-closed and look like a false replay.
-_nonce_clients: dict[tuple[str, int], Redis] = {}
+# TestClient request spins a fresh loop). Keyed by the loop OBJECT in a
+# WeakKeyDictionary so that when a loop is garbage-collected (every pytest
+# per-request loop) its cached client is dropped automatically — the previous
+# ``id(loop)`` keying both leaked entries (id is never reclaimed) and risked id
+# reuse colliding a stale client onto a new loop. The inner dict maps nonce URL →
+# client so a single loop can hold one pool per distinct URL. Never shared across
+# loops — sharing across loops makes redis-py raise mid-command, which fails
+# closed and looks like a false replay.
+_nonce_clients: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str, Redis]] = (
+    weakref.WeakKeyDictionary()
+)
 
 
 def _nonce_redis(url: str) -> Redis:
     """Return an async Redis client for the nonce store, scoped to this loop.
 
     Imported lazily so the ``redis`` dependency is only required when a nonce URL
-    is configured. Reuses one client per (url, running-loop) so repeated requests
+    is configured. Reuses one client per (running-loop, url) so repeated requests
     on the server loop share a connection pool instead of opening a new pool each
-    time (which would exhaust Redis under load).
+    time (which would exhaust Redis under load). Collected loops free their
+    clients automatically via the WeakKeyDictionary.
     """
     from redis.asyncio import Redis as AsyncRedis
 
-    loop_id = id(asyncio.get_running_loop())
-    key = (url, loop_id)
-    client = _nonce_clients.get(key)
+    loop = asyncio.get_running_loop()
+    per_url = _nonce_clients.get(loop)
+    if per_url is None:
+        per_url = {}
+        _nonce_clients[loop] = per_url
+    client = per_url.get(url)
     if client is None:
         client = AsyncRedis.from_url(url, decode_responses=True)
-        _nonce_clients[key] = client
+        per_url[url] = client
     return client
 
 
@@ -229,16 +285,13 @@ async def verify_gateway_hmac(
     if not _within_skew(ts_int):
         raise _UNAUTHORIZED
 
-    # Read and cache the body. Starlette caches request._body inside
-    # ``await request.body()``, so downstream handlers that call request.body()
-    # / request.json() see the same bytes — reading here does NOT consume the
-    # stream for the handler. Empty body → b"" → sha256(b"") sentinel.
-    body = await request.body()
-
-    # A body beyond the signed limit was not signed the same way the gateway
-    # signs (≤1 MB); reject rather than hash a truncated/oversized payload.
-    if len(body) > GATEWAY_BODY_LIMIT:
-        raise _UNAUTHORIZED
+    # Stream the body with an early-exit cap so an oversized payload is never
+    # fully buffered (OOM/DoS), then cache it for downstream handlers. A body
+    # beyond the signed limit was not signed the way the gateway signs (≤1 MB),
+    # so it is rejected with 413 (distinct from the 401 signature failures)
+    # before reaching signature verification. Empty body → b"" → sha256(b"")
+    # sentinel.
+    body = await _read_body_capped(request, GATEWAY_BODY_LIMIT)
 
     expected = compute_gateway_signature(
         secret.encode("utf-8"),
