@@ -1,4 +1,8 @@
-"""Token-mint test: POST /api/avatar/sessions returns a verifiable LiveKit JWT."""
+"""Token-mint test: POST /sessions returns a verifiable LiveKit JWT.
+
+The router prefix was dropped — the gateway strips ``/api/avatar`` before
+forwarding, so the service now receives ``/sessions`` (not ``/api/avatar/sessions``).
+"""
 
 from __future__ import annotations
 
@@ -12,7 +16,7 @@ from tests.conftest import TEST_API_KEY, TEST_API_SECRET, TEST_URL
 def test_create_session_mints_verifiable_token_with_room_grant() -> None:
     client = TestClient(create_app())
     resp = client.post(
-        "/api/avatar/sessions",
+        "/sessions",
         json={"room": "demo", "identity": "u1"},
     )
     assert resp.status_code == 200
@@ -33,7 +37,7 @@ def test_create_session_mints_verifiable_token_with_room_grant() -> None:
 
 def test_create_session_applies_defaults_when_body_empty() -> None:
     client = TestClient(create_app())
-    resp = client.post("/api/avatar/sessions", json={})
+    resp = client.post("/sessions", json={})
     assert resp.status_code == 200
     data = resp.json()
     # Defaults from Settings (avatar-lobby / avatar-guest).
@@ -47,7 +51,7 @@ def test_create_session_applies_defaults_when_body_empty() -> None:
 
 def test_token_fails_verification_with_wrong_secret() -> None:
     client = TestClient(create_app())
-    resp = client.post("/api/avatar/sessions", json={"room": "demo", "identity": "u1"})
+    resp = client.post("/sessions", json={"room": "demo", "identity": "u1"})
     token = resp.json()["token"]
 
     import pytest

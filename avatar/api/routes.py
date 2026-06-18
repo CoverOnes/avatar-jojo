@@ -1,4 +1,9 @@
-"""Avatar control API routes — the only surface the gateway proxies (/api/avatar/*)."""
+"""Avatar control API routes — the only surface the gateway proxies (/api/avatar/*).
+
+The gateway strips ``/api/avatar`` before forwarding, so this router serves all
+routes at their root paths (``/health``, ``/sessions``).  The full gateway path
+``/api/avatar/health`` forwards as ``/health`` to this service.
+"""
 
 from __future__ import annotations
 
@@ -13,7 +18,7 @@ from avatar.api.security import verify_gateway_hmac
 from avatar.api.tokens import mint_join_token
 from avatar.config import Settings, get_settings
 
-router = APIRouter(prefix="/api/avatar")
+router = APIRouter()
 
 
 @router.get("/health", response_model=HealthResponse)
