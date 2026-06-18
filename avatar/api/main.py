@@ -19,7 +19,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="avatar-jojo control API",
         version=__version__,
-        description="CoverOnes AI-avatar service — control surface (/api/avatar/*).",
+        description="CoverOnes AI-avatar service — gateway path /api/avatar/*, served at root.",
     )
     app.include_router(router)
     return app
