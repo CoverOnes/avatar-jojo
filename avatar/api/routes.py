@@ -7,7 +7,7 @@ routes at their root paths (``/health``, ``/sessions``).  The full gateway path
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from avatar.api.schemas import (
     HealthResponse,
@@ -33,13 +33,21 @@ async def health() -> HealthResponse:
     dependencies=[Depends(verify_gateway_hmac)],
 )
 async def create_session(
+    request: Request,
     body: SessionRequest,
     settings: Settings = Depends(get_settings),
 ) -> SessionResponse:
-    """Mint a LiveKit join token for a (possibly new) room + identity."""
+    """Mint a LiveKit join token for a (possibly new) room + identity.
+
+    ``can_publish`` is granted only when ``role="operator"`` AND the caller
+    provides a non-empty ``X-User-Id`` header (auth-gated; fail-safe default
+    is viewer/subscribe-only).
+    """
     room = body.room or settings.default_room
     identity = body.identity or settings.default_identity
-    token = mint_join_token(settings, room=room, identity=identity)
+    user_id = request.headers.get("X-User-Id") or ""
+    can_publish = body.role == "operator" and bool(user_id)
+    token = mint_join_token(settings, room=room, identity=identity, can_publish=can_publish)
     return SessionResponse(
         token=token,
         url=settings.livekit_url,
