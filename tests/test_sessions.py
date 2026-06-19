@@ -60,3 +60,68 @@ def test_token_fails_verification_with_wrong_secret() -> None:
         api.TokenVerifier(TEST_API_KEY, "a-different-wrong-secret-32-bytes-xx").verify(
             token, verify_signature=True
         )
+
+
+# ---------------------------------------------------------------------------
+# T1–T4: operator/viewer role separation
+# ---------------------------------------------------------------------------
+
+
+def test_T1_operator_with_user_id_gets_publish_grants() -> None:
+    """T1: role=operator + X-User-Id header → full publish grants."""
+    client = TestClient(create_app())
+    resp = client.post(
+        "/sessions",
+        json={"room": "demo", "identity": "op1", "role": "operator"},
+        headers={"X-User-Id": "u-123"},
+    )
+    assert resp.status_code == 200
+    claims = api.TokenVerifier(TEST_API_KEY, TEST_API_SECRET).verify(resp.json()["token"])
+    assert claims.video is not None
+    assert claims.video.can_publish is True
+    assert claims.video.can_subscribe is True
+    assert claims.video.can_publish_data is True
+
+
+def test_T2_viewer_role_gets_subscribe_only_grants() -> None:
+    """T2: role=viewer → subscribe-only, no publish."""
+    client = TestClient(create_app())
+    resp = client.post(
+        "/sessions",
+        json={"room": "demo", "identity": "v1", "role": "viewer"},
+    )
+    assert resp.status_code == 200
+    claims = api.TokenVerifier(TEST_API_KEY, TEST_API_SECRET).verify(resp.json()["token"])
+    assert claims.video is not None
+    assert claims.video.can_publish is False
+    assert claims.video.can_subscribe is True
+    assert claims.video.can_publish_data is False
+
+
+def test_T3_omitted_role_defaults_to_viewer() -> None:
+    """T3: omitting role defaults to viewer (least privilege)."""
+    client = TestClient(create_app())
+    resp = client.post(
+        "/sessions",
+        json={"room": "demo", "identity": "v2"},
+    )
+    assert resp.status_code == 200
+    claims = api.TokenVerifier(TEST_API_KEY, TEST_API_SECRET).verify(resp.json()["token"])
+    assert claims.video is not None
+    assert claims.video.can_publish is False
+    assert claims.video.can_publish_data is False
+
+
+def test_T4_operator_without_user_id_gets_viewer_grants() -> None:
+    """T4: role=operator but no/empty X-User-Id → viewer grants (fail-safe)."""
+    client = TestClient(create_app())
+    resp = client.post(
+        "/sessions",
+        json={"room": "demo", "identity": "op-noauth", "role": "operator"},
+        # deliberately omit X-User-Id header
+    )
+    assert resp.status_code == 200
+    claims = api.TokenVerifier(TEST_API_KEY, TEST_API_SECRET).verify(resp.json()["token"])
+    assert claims.video is not None
+    assert claims.video.can_publish is False
+    assert claims.video.can_publish_data is False
